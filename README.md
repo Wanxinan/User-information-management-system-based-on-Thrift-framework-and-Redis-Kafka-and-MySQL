@@ -4,3 +4,28 @@
 4、数据存储要求使用mysql落地数据（使用存储过程）、使用redis做数据缓存、数据发生变化时通过kafka发送变化消息（使用json数据格式）
 5、实现用户信息操作客户端（通过命令行操作）
 6、实现用户信息变化处理服务，用户信息变化时输出变化的内容
+#编译服务端
+g++ -std=c++11 -I/usr/local/include -Igen-cpp -L/usr/local/lib -L/usr/lib64/mysql 
+-o server server.cpp gen-cpp/UserService.cpp gen-cpp/user_service_types.cpp 
+-lthrift -lhiredis -lrdkafka++ -lrdkafka -ljsoncpp -lmysqlclient
+
+#编译客户端
+g++ -std=c++11 -I/usr/local/include -Igen-cpp -L/usr/local/lib -L/usr/lib64/mysql 
+-o client client.cpp gen-cpp/UserService.cpp gen-cpp/user_service_types.cpp 
+-lthrift -lhiredis -lrdkafka++ -lrdkafka -ljsoncpp -lmysqlclient
+
+#编译消费者
+g++ -o consumer consumer.cpp -lrdkafka++ -lrdkafka  -ljsoncpp -lpthread -lz -ldl
+
+./server
+
+./consumer
+
+#创建操作
+./client create 1  "wangbiao" male 24 "17766668888" "wangbiao@paipai.com" "C++ Server Engineer" 
+
+#查找操作
+./client get 1
+
+#更新操作
+./client update 1 --username "libai" --age 99 ...
