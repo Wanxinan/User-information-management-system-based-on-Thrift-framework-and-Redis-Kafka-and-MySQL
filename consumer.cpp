@@ -38,10 +38,10 @@ int main(){
         return 1;
     }
 
-    if(conf->set("enable.auto.commit", "true", errstr)!=RdKafka::Conf::CONF_OK){
-        cerr<<"配置错误: "<<errstr<<endl;
-        return 1;
-    }
+    // if(conf->set("enable.auto.commit", "true", errstr)!=RdKafka::Conf::CONF_OK){
+    //     cerr<<"配置错误: "<<errstr<<endl;
+    //     return 1;
+    // }
     
     //设置事件回调
     UserDeliveryReportCb user_dr_cb;
@@ -74,7 +74,7 @@ int main(){
             Json::Value root;
             Json::Reader reader;
             if(reader.parse((char*)msg->payload(),root)){
-                cout<<"User Update: "<<root["action"].asString()
+                cout<<"User Update: "<<root["action"].asString()<<"\n"
                     <<"ID: "<<root["id"].asInt64()<<"\n"
                     <<"Changes:\n"
                     <<"Username: "<<root["name"].asString()<<"\n"

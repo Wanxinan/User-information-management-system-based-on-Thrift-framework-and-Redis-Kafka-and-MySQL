@@ -2,14 +2,15 @@ DELIMITER //
 CREATE PROCEDURE CreateUser(
     IN p_id BIGINT,
     IN p_username VARCHAR(50),
-    IN p_gender INT,
+    IN p_gender TINYINT,
     IN p_age INT,
     IN p_phone VARCHAR(20),
     IN p_email VARCHAR(100),
     IN p_desc TEXT
 )
 BEGIN 
-    INSERT INTO users VALUES(p_id,p_username,p_gender,p_age,p_phone,p_email,p_desc);
+    INSERT INTO users(id,username,gender,age,phone,email,desc) 
+    VALUES(p_id,p_username,p_gender,p_age,p_phone,p_email,p_desc);
 END //
 
 

@@ -4,6 +4,8 @@
 #include <sstream>
 #include <vector>
 #include <memory>
+#include <atomic>
+#include <thread>
 #include <cstring>
 #include <hiredis/hiredis.h>
 #include <jsoncpp/json/json.h>
@@ -18,6 +20,22 @@ using namespace ::apache::thrift;
 using namespace ::apache::thrift::protocol;
 using namespace ::apache::thrift::transport;
 using namespace ::apache::thrift::server;
+
+class IDGenerator {
+private:
+    atomic<int> counter;
+
+public:
+    IDGenerator() {
+        counter.store(0);
+    }
+
+    int ID() {
+        int time_suffix = time(nullptr) % 100;      
+        int cnt = counter.fetch_add(1) % 10000; 
+        return time_suffix * 10000 + cnt;            
+    }
+};
 
 class UserServiceHandler : virtual public UserServiceIf {
 public:
@@ -95,15 +113,12 @@ public:
     }
 
     void createUsers(User& _return, const User& user) {
-        if(user.id == 0){
-            UserException e;
-            e.messgae = "User ID cannot be zero";
-            throw e;
-        }
- 
+        
+        int64_t new_id = id_generator.ID();
+
         //使用存储过程创建用户
         vector<string> params;
-        params.push_back(to_string(user.id));
+        params.push_back(to_string(new_id)); 
         params.push_back("'"+escapeSQL(user.username)+"'");
         params.push_back(to_string(static_cast<int>(user.gender)));
         params.push_back(to_string(user.age));
@@ -111,22 +126,29 @@ public:
         params.push_back("'" + escapeSQL(user.email)+"'");
         params.push_back("'" + escapeSQL(user.description)+"'");
 
+        cout<<new_id<<endl;
+        
+        // //
+        // printUser(user);
+        
         CallMysqlProcedure("CreateUser",params);
 
+        _return = user;
+        _return.id = new_id; //服务端分配id
+        _return.__isset.id = true;
+
         //设置redis缓存
-        SetRedisUser(user);
+        SetRedisUser(_return);
 
         //发送kafka消息
-        SendKafkaMessage(user,"CREATE");        
-
-        _return = user;
+        SendKafkaMessage(_return,"CREATE");        
     }
 
     void getUserInfo(User& _return, const int64_t id) {
         //先尝试从redis获取,有的话直接return
         if(getRedisUser(id,_return)){
             return;
-        }
+        }        
 
         //没有的话从mysql查，用Mysql存储过程语句
         getUserFromProcedure(id,_return);
@@ -143,16 +165,24 @@ public:
         if (!user.__isset.field_mask || user.field_mask.empty()) {
             return; // 没有需要更新的字段
         }
+        
+        if(user.id == 0){
+            UserException e;
+            e.errorCode = 400;
+            e.message = "User id must be provided for update.";
+            throw e;
+        }
 
         // 获取当前用户信息
         User current;
         getUserInfo(current, user.id);
+        cout<<"获取当前用户信息成功！"<<endl;
 
         // 构建更新参数
         vector<string> params;
         params.push_back(to_string(user.id));
         
-        // 只更新掩码标记的字段
+        // 只更新标记的字段
         const auto& mask = user.field_mask;
         string updateFields = "";
         
@@ -211,6 +241,7 @@ private:
     redisContext* redis_conn;
     RdKafka::Producer* kafka_producer;
     RdKafka::Topic* topic;
+    static IDGenerator id_generator;
 
     //打印调试
     void printUser(const User& user){
@@ -335,6 +366,7 @@ private:
         return true;
     }
 
+  
     //调用Mysql存储过程
     void CallMysqlProcedure(const string& procedure,const vector<string>& params){
 
@@ -355,7 +387,7 @@ private:
 
             UserException e;
             e.errorCode = 500;
-            e.messgae = "Mysql error: " + string(mysql_error(mysql_conn));
+            e.message = "Mysql error: " + string(mysql_error(mysql_conn));
             throw e;
         }
 
@@ -368,26 +400,47 @@ private:
 
     //存储过程结果中获取用户
     void getUserFromProcedure(int64_t id,User& user){
+        while (mysql_next_result(mysql_conn) == 0) {
+            MYSQL_RES* res = mysql_store_result(mysql_conn);
+            if (res) mysql_free_result(res);
+        }
+
         string query = "CALL GetUser(" + to_string(id) + ")";
-
+            
         if(mysql_query(mysql_conn,query.c_str())){
+
             UserException e;
-            e.messgae = "Mysql error:"+ string(mysql_error(mysql_conn));
+            e.errorCode = 500;
+            e.message = "Mysql error:"+ string(mysql_error(mysql_conn));
             throw e;
         }
 
-        MYSQL_RES* result = mysql_store_result(mysql_conn);
-        if(!result){
+        MYSQL_RES* result = nullptr;
+        MYSQL_ROW row = nullptr;
+        bool found = false;
+    
+        // 循环所有结果集，直到找到有数据的
+        int result_count = 0;
+        do {
+            result = mysql_store_result(mysql_conn);
+            cout << "[DEBUG] result_count: " << result_count << ", rows: " << (result ? mysql_num_rows(result) : -1) << endl;
+            if (result) {
+                my_ulonglong rows = mysql_num_rows(result);
+                if (rows > 0) {
+                    row = mysql_fetch_row(result);
+                    found = true;
+                    break;
+                }
+                mysql_free_result(result);
+            }
+            result_count++;
+        } while (mysql_next_result(mysql_conn) == 0);
+    
+        if (!found || !row) {
+            if (result) mysql_free_result(result);
             UserException e;
-            e.messgae ="User not found.";
-            throw e;
-        }
-
-        MYSQL_ROW row = mysql_fetch_row(result);
-        if(!row){
-            mysql_free_result(result);
-            UserException e;
-            e.messgae ="User not found.";
+            e.errorCode = 404;
+            e.message = "User not found.";
             throw e;
         }
 
@@ -402,11 +455,10 @@ private:
 
         mysql_free_result(result);
 
-        //处理多结果集
-        while(mysql_next_result(mysql_conn)==0){
-            MYSQL_RES* res = mysql_store_result(mysql_conn);
-            if(res)
-                mysql_free_result(res);
+        // 清理后续结果集
+        while (mysql_next_result(mysql_conn) == 0) {
+            MYSQL_RES* extraRes = mysql_store_result(mysql_conn);
+            if (extraRes) mysql_free_result(extraRes);
         }
     }
 
@@ -428,9 +480,10 @@ private:
             default: 
                 throw invalid_argument("invalid gender value " + to_string(value));
         }
-
     }
 };
+
+IDGenerator UserServiceHandler::id_generator;
 
 int main(int argc, char **argv) {
     int port = 9090;

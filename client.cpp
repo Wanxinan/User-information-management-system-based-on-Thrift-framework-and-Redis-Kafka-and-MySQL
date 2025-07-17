@@ -37,8 +37,7 @@ Command parseCommand(int argc,char* argv[]){
 
 //打印用户信息
 void printUser(const User& user){
-    cout<<"User ID: "<<user.id<<"\n"
-        <<"User Name: "<<user.username<<"\n"
+    cout<<"User Name: "<<user.username<<"\n"
         <<"Gender: ";
     switch (user.gender)
     {   
@@ -65,7 +64,7 @@ void printUser(const User& user){
 void printHelp() {
     std::cout << "User Management Client\n"
               << "Usage:\n"
-              << "  create <id> <username> <gender> <age> <phone> <email> <description>\n"
+              << "  create  <username> <gender> <age> <phone> <email> <description>\n"
               << "    gender: male, female, other\n\n"
               << "  get <id>\n\n"
               << "  update <id> [options]\n"
@@ -95,12 +94,12 @@ int main(int argc,char** argv){
     try {
         transport->open();
 
-        if (cmd.name == "create" && cmd.args.size() == 7) {
+        if (cmd.name == "create" && cmd.args.size() == 6) {
             User user;
-            user.id = stoll(cmd.args[0]);
-            user.username = cmd.args[1];
+            //user.id = stoll(cmd.args[0]);
+            user.username = cmd.args[0];
             
-            string gender = cmd.args[2];
+            string gender = cmd.args[1];
             transform(gender.begin(), gender.end(), gender.begin(), ::tolower);
             if (gender == "male") 
                 user.gender = Gender::MALE;
@@ -109,25 +108,33 @@ int main(int argc,char** argv){
             else 
                 user.gender = Gender::OTHER;
             
-            user.age = stoi(cmd.args[3]);
-            user.phone = cmd.args[4];
-            user.email = cmd.args[5];
-            user.description = cmd.args[6];
+            user.age = stoi(cmd.args[2]);
+            user.phone = cmd.args[3];
+            user.email = cmd.args[4];
+            user.description = cmd.args[5];
             
             User created;
             client.createUsers(created, user);
             cout << "User created successfully!\n";
+            cout<<"User ID: "<<created.id<<endl;
             printUser(created);
             
         } else if (cmd.name == "get" && cmd.args.size() == 1) {
             User user;
+            user.id = stoll(cmd.args[0]);
             client.getUserInfo(user, stoll(cmd.args[0]));
             cout << "User get successfully!\n";
+            cout<<"User ID: "<<user.id<<endl;
             printUser(user);
             
         } else if (cmd.name == "update" && cmd.args.size() >= 1) {
             User user;
             user.id = stoll(cmd.args[0]);
+            user.__isset.id = true;//关键
+            if (user.id == 0) {
+                cerr << "Error: id must be provided for update." << endl;
+                return 1;
+            }
     
             // 创建字段掩码
             map<string, bool> field_mask;
@@ -171,20 +178,12 @@ int main(int argc,char** argv){
             // 设置字段掩码
             user.__set_field_mask(field_mask);
             client.updateUserInfo(user);
-
-            // 显示更新的字段
-            if (user.__isset.username) cout << "username ";
-            if (user.__isset.gender) cout << "gender ";
-            if (user.__isset.age) cout << "age ";
-            if (user.__isset.phone) cout << "phone ";
-            if (user.__isset.email) cout << "email ";
-            if (user.__isset.description) cout << "description ";
-            cout << "\n\n";
             
             // 获取并显示更新后的用户信息
             User updated;
             client.getUserInfo(updated, user.id);
             cout << "User update successfully!\n";
+            cout<<"User Id:"<<user.id<<endl;
             printUser(updated);
             
         } else {
@@ -192,11 +191,14 @@ int main(int argc,char** argv){
         }
 
         transport->close();
-    }catch (const exception& ex) {
-        std::cerr << "ERROR: " << ex.what() << std::endl;
+    
+    }
+    catch (const UserException& ex){
+        std::cerr << "UserException: [" << ex.errorCode <<"] "<<ex.message<< std::endl;
         return 1;
-    }catch (const UserException& ex){
-        std::cerr << "UserException: [" << ex.errorCode <<"] "<<ex.messgae<< std::endl;
+    }
+    catch (const exception& ex) {
+        std::cerr << "ERROR: " << ex.what() << std::endl;
         return 1;
     }
 
